@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "requirements": "^3.0.0",
+    "sqlalchemy": "^10.1.1"
+  }
+}
