@@ -17,6 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Include routers
 app.include_router(students.router, prefix="/api/v1")
 app.include_router(schools.router, prefix="/api/v1")
