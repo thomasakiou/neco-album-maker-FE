@@ -22,52 +22,31 @@ class UploadPhotosHandler:
         errors = []
         
         try:
-            is_rar = command.zip_path.lower().endswith('.rar')
-            archive = rarfile.RarFile(command.zip_path, 'r') if is_rar else zipfile.ZipFile(command.zip_path, 'r')
-            
-            with archive:
-                file_list = archive.infolist()
-                print(f"Total files in archive: {len(file_list)}")
+            # 1. Process Archive if present
+            if command.zip_path:
+                is_rar = command.zip_path.lower().endswith('.rar')
+                archive = rarfile.RarFile(command.zip_path, 'r') if is_rar else zipfile.ZipFile(command.zip_path, 'r')
                 
-                for file_info in file_list:
-                    filename = file_info.filename if is_rar else file_info.filename
-                    print(f"Processing: {filename}")
-                    
-                    if file_info.is_dir() if hasattr(file_info, 'is_dir') else filename.endswith('/'):
-                        print(f"Skipping directory: {filename}")
-                        continue
-                    
-                    filename = Path(filename).name
-                    if not filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-                        print(f"Skipping non-image: {filename}")
-                        continue
-                    
-                    reg_no = filename.split('.')[0].strip()
-                    print(f"Looking for student with reg_no: {reg_no}")
-                    
-                    result = await self.session.execute(
-                        select(Student).where(Student.reg_no.ilike(reg_no))
-                    )
-                    student = result.scalar_one_or_none()
-                    
-                    if not student:
-                        print(f"Student not found: {reg_no}")
-                        missing_students.append(reg_no)
-                        continue
-                    
-                    photo_path = photos_dir / f"{reg_no}.jpg"
-                    print(f"Saving photo to: {photo_path}")
-                    
-                    with archive.open(file_info.filename if is_rar else file_info) as source, open(photo_path, 'wb') as target:
-                        target.write(source.read())
-                    
-                    await self.session.execute(
-                        update(Student)
-                        .where(Student.id == student.id)
-                        .values(photo_path=str(photo_path))
-                    )
-                    saved += 1
-                    print(f"Saved photo for: {reg_no}")
+                with archive:
+                    file_list = archive.infolist()
+                    for file_info in file_list:
+                        filename = file_info.filename
+                        if file_info.is_dir() if hasattr(file_info, 'is_dir') else filename.endswith('/'):
+                            continue
+                        
+                        if not filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                            continue
+                        
+                        with archive.open(filename) as source:
+                            content = source.read()
+                            if await self._process_photo(filename, content, photos_dir, missing_students):
+                                saved += 1
+
+            # 2. Process Individual Files if present
+            if command.individual_files:
+                for filename, content in command.individual_files:
+                    if await self._process_photo(filename, content, photos_dir, missing_students):
+                        saved += 1
             
             await self.session.commit()
             print(f"Committed {saved} photos")
@@ -84,3 +63,35 @@ class UploadPhotosHandler:
             missing_students=missing_students,
             errors=errors
         )
+
+    async def _process_photo(self, filename: str, content: bytes, photos_dir: Path, missing_students: list) -> bool:
+        """Processes a single photo and updates the database. Returns True if saved."""
+        try:
+            basename = Path(filename).name
+            reg_no = basename.split('.')[0].strip()
+            
+            # Find student
+            result = await self.session.execute(
+                select(Student).where(Student.reg_no.ilike(reg_no))
+            )
+            student = result.scalar_one_or_none()
+            
+            if not student:
+                missing_students.append(reg_no)
+                return False
+            
+            # Save to disk
+            photo_path = photos_dir / f"{reg_no}.jpg"
+            with open(photo_path, 'wb') as target:
+                target.write(content)
+            
+            # Update DB
+            await self.session.execute(
+                update(Student)
+                .where(Student.id == student.id)
+                .values(photo_path=str(photo_path))
+            )
+            return True
+        except Exception as e:
+            print(f"Error processing {filename}: {e}")
+            return False

@@ -1,11 +1,15 @@
 import tempfile
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from pathlib import Path
+from typing import Optional, List
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import get_db
 from app.domain.commands.upload_dbf_command import UploadDbfCommand
 from app.domain.commands.upload_photos_command import UploadPhotosCommand
 from app.domain.commands.handlers.upload_dbf_handler import UploadDbfHandler
 from app.domain.commands.handlers.upload_photos_handler import UploadPhotosHandler
+from app.domain.commands.handlers.scan_photos_handler import ScanPhotosHandler
+from app.schemas.upload_schema import ScanPhotosRequest
 from app.api.v1.deps import get_student_repo, get_school_repo, get_state_repo
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
@@ -236,20 +240,44 @@ async def upload_student_dbf(
 
 @router.post("/photos")
 async def upload_photos(
-    photos_zip: UploadFile = File(...),
+    photos_zip: Optional[UploadFile] = File(None),
+    photos: List[UploadFile] = File(None),
     session: AsyncSession = Depends(get_db)
 ):
-    if not photos_zip.filename.lower().endswith(('.zip', '.rar')):
-        raise HTTPException(status_code=400, detail="File must be a ZIP or RAR archive")
-    
-    # Save archive temporarily
-    suffix = '.rar' if photos_zip.filename.lower().endswith('.rar') else '.zip'
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
-        temp_file.write(await photos_zip.read())
-        temp_path = temp_file.name
-    
+    """
+    Upload photos either as a single ZIP/RAR file or as multiple individual files.
+    This supports both "Upload ZIP File" and "Upload Unzipped Folder" UI options.
+    """
+    if not photos_zip and not photos:
+        raise HTTPException(status_code=400, detail="Either photos_zip or photos list must be provided")
+
+    individual_files = []
+    temp_path = None
+
     try:
-        command = UploadPhotosCommand(temp_path)
+        # Case 1: Multiple individual files (Folder Upload)
+        if photos:
+            for file in photos:
+                if not file.filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    continue
+                content = await file.read()
+                individual_files.append((file.filename, content))
+        
+        # Case 2: ZIP/RAR archive
+        if photos_zip:
+            if not photos_zip.filename.lower().endswith(('.zip', '.rar')):
+                raise HTTPException(status_code=400, detail="photos_zip must be a ZIP or RAR archive")
+            
+            suffix = '.rar' if photos_zip.filename.lower().endswith('.rar') else '.zip'
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+                temp_file.write(await photos_zip.read())
+                temp_path = temp_file.name
+
+        # Execute Command
+        command = UploadPhotosCommand(
+            zip_path=temp_path,
+            individual_files=individual_files if individual_files else None
+        )
         handler = UploadPhotosHandler(session)
         result = await handler.handle(command)
         
@@ -259,7 +287,36 @@ async def upload_photos(
             "errors": result.errors
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         import os
-        os.unlink(temp_path)
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+@router.post("/scan-photos")
+async def scan_photos(
+    request: ScanPhotosRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Initiate a server-side background scan of a directory to match photos to candidates.
+    Highly recommended for large datasets (1M+ photos).
+    """
+    path = Path(request.path)
+    if not path.exists() or not path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Invalid directory path: {request.path}")
+
+    # Initialize handler
+    handler = ScanPhotosHandler(session)
+    
+    # Add to background tasks to avoid timeout
+    background_tasks.add_task(handler.handle_scan, request.path)
+    
+    return {
+        "message": f"Photo scan initiated for path: {request.path}. This will run in the background.",
+        "status": "started"
+    }
