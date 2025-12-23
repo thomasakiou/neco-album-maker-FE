@@ -15,6 +15,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from PIL import Image as PILImage
 from app.domain.models.student import Student
 from app.domain.models.school import School
+from app.core.config import settings
 
 
 class DiskPDFGenerator:
@@ -237,31 +238,43 @@ class DiskPDFGenerator:
         project_root = Path(__file__).parent.parent.parent.parent
         placeholder_path = project_root / "public" / "image" / "null.jpg"
         
+        # Try to resolve photo path in the following order:
+        # 1. Path in DB (if exists) -> check exact path, then relative to CWD, then relative to project root
+        # 2. Fallback: Check standard specific location "media/photos/{reg_no}.jpg"
+        
+        possible_paths = []
+
+        # Strategy 1: Trust DB path if available
         if student.photo_path:
-            # Handle potential leading slashes that make path look absolute (root of drive) on Windows
-            # but are actually relative to project root in our context. 
-            # We treat them as relative paths by stripping leading separators.
             clean_path_str = student.photo_path.lstrip('/').lstrip('\\')
-            p_path = Path(clean_path_str)
-            
-            if not p_path.is_absolute():
-                # If it's a relative path:
-                # 1. Check if it exists relative to current working directory (CWD)
-                if not p_path.exists():
-                    # 2. Check if it exists relative to project_root
-                    resolved_path = project_root / p_path
-                    if resolved_path.exists():
-                        p_path = resolved_path
-            
-            if p_path.exists():
+            p = Path(clean_path_str)
+            possible_paths.append(p)                                   # As is
+            possible_paths.append(project_root / p)                    # Relative to root
+            if not p.is_absolute():
+                possible_paths.append(Path.cwd() / p)                  # Relative to CWD
+
+        # Strategy 2: Guess path based on configured photos directory (even if DB is null)
+        # Uses settings.photos_dir which is now mapped to C:/photo/ssceint2025
+        fallback_path = settings.photos_dir / f"{student.reg_no}.jpg"
+        possible_paths.append(fallback_path)
+        
+        # Also try "photos" dir in CWD just in case
+        possible_paths.append(Path("media/photos") / f"{student.reg_no}.jpg")
+
+        for p_path in possible_paths:
+            if p_path.exists() and p_path.is_file():
                 try:
                     c.drawImage(str(p_path), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
                     photo_drawn = True
+                    # Optimization: Stop once we find a valid photo
+                    break
                 except Exception as e:
-                    print(f"Error drawing photo {student.photo_path} (resolved: {p_path}): {e}")
+                    print(f"Error drawing photo from {p_path}: {e}")
                     pass
-            else:
-                print(f"Photo path does not exist: {student.photo_path} (checked: {p_path})")
+        
+        if not photo_drawn and student.photo_path:
+            # Only print log if we expected a photo (DB had one) but failed to find it anywhere
+            print(f"Warning: Photo for {student.reg_no} not found. DB said: {student.photo_path}. Checked fallbacks.")
         
         if not photo_drawn and placeholder_path.exists():
             try:
