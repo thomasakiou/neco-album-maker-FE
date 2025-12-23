@@ -238,23 +238,30 @@ class DiskPDFGenerator:
         placeholder_path = project_root / "public" / "image" / "null.jpg"
         
         if student.photo_path:
-            p_path = Path(student.photo_path)
+            # Handle potential leading slashes that make path look absolute (root of drive) on Windows
+            # but are actually relative to project root in our context. 
+            # We treat them as relative paths by stripping leading separators.
+            clean_path_str = student.photo_path.lstrip('/').lstrip('\\')
+            p_path = Path(clean_path_str)
             
-            # If not absolute, it's relative to project root (e.g., media/photos/...)
             if not p_path.is_absolute():
-                # No need to prepend if it already exists or if it already starts with media
-                # Just trust the path as stored
-                pass
+                # If it's a relative path:
+                # 1. Check if it exists relative to current working directory (CWD)
+                if not p_path.exists():
+                    # 2. Check if it exists relative to project_root
+                    resolved_path = project_root / p_path
+                    if resolved_path.exists():
+                        p_path = resolved_path
             
             if p_path.exists():
                 try:
                     c.drawImage(str(p_path), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
                     photo_drawn = True
                 except Exception as e:
-                    print(f"Error drawing photo {student.photo_path}: {e}")
+                    print(f"Error drawing photo {student.photo_path} (resolved: {p_path}): {e}")
                     pass
             else:
-                print(f"Photo path does not exist: {p_path}")
+                print(f"Photo path does not exist: {student.photo_path} (checked: {p_path})")
         
         if not photo_drawn and placeholder_path.exists():
             try:
