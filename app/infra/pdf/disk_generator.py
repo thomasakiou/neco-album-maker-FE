@@ -12,6 +12,9 @@ from reportlab.graphics import renderPDF
 from reportlab.platypus import Table, TableStyle, Image, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.utils import ImageReader
+import zipfile
+import io
 from PIL import Image as PILImage
 from app.domain.models.student import Student
 from app.domain.models.school import School
@@ -69,10 +72,10 @@ class DiskPDFGenerator:
             parent=self.styles['Normal'],
             fontSize=9,
             leading=10,
-            fontName='Helvetica'
+            fontName='Helvetica-Bold'
         )
 
-    def generate_school_album(self, school: School, students: List[Student], exam_title: str, output_path: str):
+    def generate_school_album(self, school: School, students: List[Student], exam_title: str, output_path: str, photos_dir: str = None, zip_archive: zipfile.ZipFile = None):
         """Generates a PDF album for a single school."""
         c = canvas.Canvas(output_path, pagesize=A4)
         
@@ -87,7 +90,7 @@ class DiskPDFGenerator:
         for i in range(0, len(students), students_per_page):
             batch = students[i:i + students_per_page]
             page_num = (i // students_per_page) + 1
-            self._draw_grid_page(c, school, batch, page_num, total_pages)
+            self._draw_grid_page(c, school, batch, page_num, total_pages, photos_dir, zip_archive)
             c.showPage()
             
         c.save()
@@ -127,7 +130,7 @@ class DiskPDFGenerator:
         logo_path = project_root / "public" / "image" / "neco.png"
         if logo_path.exists():
             # Shifted right by 3mm (from -15mm to -12mm)
-            c.drawImage(str(logo_path), border_width - 12*mm, self.height - 75*mm, width=30*mm, height=30*mm, preserveAspectRatio=True, mask='auto')
+            c.drawImage(str(logo_path), border_width - 13.5*mm, self.height - 75*mm, width=30*mm, height=30*mm, preserveAspectRatio=True, mask='auto')
 
         # Header - Bolder and Centered
         c.setFillColor(self.neco_green)
@@ -184,25 +187,25 @@ class DiskPDFGenerator:
         c.setFont("Helvetica-Bold", 10)
         c.drawCentredString(badge_x + badge_w/2, badge_y + 3*mm, "SCHOOL COPY")
 
-    def _draw_grid_page(self, c: canvas.Canvas, school: School, students: List[Student], page_num: int, total_pages: int):
+    def _draw_grid_page(self, c: canvas.Canvas, school: School, students: List[Student], page_num: int, total_pages: int, photos_dir: str = None, zip_archive: zipfile.ZipFile = None):
         c.setFillColor(colors.black)
         
         # Header: labels match 112.png
         c.setFont("Helvetica-Bold", 9)
-        c.drawString(15*mm, self.height - 10*mm, "SCHOOL NUMBER:")
+        c.drawString(15*mm, self.height - 15*mm, "SCHOOL NUMBER:")
         c.setFont("Helvetica", 9)
-        c.drawString(50*mm, self.height - 10*mm, f"[{school.schnum}]")
+        c.drawString(50*mm, self.height - 15*mm, f"[{school.schnum}]")
         
         c.setFont("Helvetica-Bold", 9)
-        c.drawString(15*mm, self.height - 15*mm, "NAME OF SCHOOL:")
+        c.drawString(15*mm, self.height - 20*mm, "NAME OF SCHOOL:")
         c.setFont("Helvetica", 9)
-        c.drawString(50*mm, self.height - 15*mm, school.sch_name.upper())
+        c.drawString(50*mm, self.height - 20*mm, school.sch_name.upper())
         
         # Grid settings
         margin_left = 10*mm
-        margin_top = 22*mm
+        margin_top = 30*mm
         cell_width = 63*mm
-        cell_height = 65*mm
+        cell_height = 60*mm
         
         for idx, student in enumerate(students):
             row = idx // 3
@@ -211,7 +214,7 @@ class DiskPDFGenerator:
             x = margin_left + col * cell_width
             y = self.height - margin_top - (row + 1) * cell_height
             
-            self._draw_student_cell(c, student, x, y, cell_width, cell_height)
+            self._draw_student_cell(c, student, x, y, cell_width, cell_height, photos_dir, zip_archive)
             
         # Footer
         footer_y = 25*mm
@@ -223,10 +226,10 @@ class DiskPDFGenerator:
         c.setFont("Helvetica", 8)
         c.drawRightString(self.width - 15*mm, 10*mm, f"{page_num} of {total_pages}")
 
-    def _draw_student_cell(self, c: canvas.Canvas, student: Student, x: float, y: float, w: float, h: float):
+    def _draw_student_cell(self, c: canvas.Canvas, student: Student, x: float, y: float, w: float, h: float, photos_dir: str = None, zip_archive: zipfile.ZipFile = None):
         # Cell border
         c.setStrokeColor(colors.black)
-        c.setLineWidth(1.0)
+        c.setLineWidth(2.0)
         c.rect(x, y, w, h)
         
         # Layout: Passport on left, QR on right
@@ -238,44 +241,33 @@ class DiskPDFGenerator:
         project_root = Path(__file__).parent.parent.parent.parent
         placeholder_path = project_root / "public" / "image" / "null.jpg"
         
-        # Try to resolve photo path in the following order:
-        # 1. Path in DB (if exists) -> check exact path, then relative to CWD, then relative to project root
-        # 2. Fallback: Check standard specific location "media/photos/{reg_no}.jpg"
-        
-        possible_paths = []
-
-        # Strategy 1: Trust DB path if available
-        if student.photo_path:
-            clean_path_str = student.photo_path.lstrip('/').lstrip('\\')
-            p = Path(clean_path_str)
-            possible_paths.append(p)                                   # As is
-            possible_paths.append(project_root / p)                    # Relative to root
-            if not p.is_absolute():
-                possible_paths.append(Path.cwd() / p)                  # Relative to CWD
-
-        # Strategy 2: Guess path based on configured photos directory (even if DB is null)
-        # Uses settings.photos_dir which is now mapped to C:/photo/ssceint2025
-        fallback_path = settings.photos_dir / f"{student.reg_no}.jpg"
-        possible_paths.append(fallback_path)
-        
-        # Also try "photos" dir in CWD just in case
-        possible_paths.append(Path("media/photos") / f"{student.reg_no}.jpg")
-
-        for p_path in possible_paths:
-            if p_path.exists() and p_path.is_file():
-                try:
-                    c.drawImage(str(p_path), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
+        # Dynamic photo source resolution
+        if zip_archive:
+            filename = f"{student.reg_no}.jpg"
+            try:
+                # Try to avoid calling ZipFile.namelist() as it can be slow for 1M+ files
+                # We instead try to open directly and catch KeyError
+                with zip_archive.open(filename) as zf:
+                    img_data = io.BytesIO(zf.read())
+                    c.drawImage(ImageReader(img_data), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
                     photo_drawn = True
-                    # Optimization: Stop once we find a valid photo
-                    break
+            except KeyError:
+                pass # Not in zip
+            except Exception as e:
+                print(f"Error drawing photo from zip for {student.reg_no}: {e}")
+        
+        if not photo_drawn:
+            target_dir = Path(photos_dir) if photos_dir else settings.photos_dir
+            photo_path = target_dir / f"{student.reg_no}.jpg"
+            
+            if photo_path.exists() and photo_path.is_file():
+                try:
+                    c.drawImage(str(photo_path), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
+                    photo_drawn = True
                 except Exception as e:
-                    print(f"Error drawing photo from {p_path}: {e}")
-                    pass
-        
-        if not photo_drawn and student.photo_path:
-            # Only print log if we expected a photo (DB had one) but failed to find it anywhere
-            print(f"Warning: Photo for {student.reg_no} not found. DB said: {student.photo_path}. Checked fallbacks.")
-        
+                    print(f"Error drawing photo from {photo_path}: {e}")
+
+        # Fallback to placeholder if dynamic source failed
         if not photo_drawn and placeholder_path.exists():
             try:
                 c.drawImage(str(placeholder_path), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
@@ -291,7 +283,7 @@ class DiskPDFGenerator:
             c.drawCentredString(photo_x + photo_size/2, photo_y + photo_size/2, "No Photo")
 
         # QR Code on the right of the photo
-        qr_size = 18*mm  # Compact size
+        qr_size = 22*mm  # Compact size
         qr_x = x + photo_size + 3*mm
         qr_y = photo_y + (photo_size - qr_size)/2
         
@@ -310,13 +302,13 @@ class DiskPDFGenerator:
         
         c.setFont("Helvetica-Bold", 9)
         c.drawString(x + 2*mm, details_y, "Serial No.")
-        c.setFont("Helvetica", 9)
+        c.setFont("Helvetica-Bold", 9)
         c.drawString(x + 20*mm, details_y, student.ser_no)
         
         details_y -= line_h
         c.setFont("Helvetica-Bold", 9)
         c.drawString(x + 2*mm, details_y, "Exam No.")
-        c.setFont("Helvetica", 9)
+        c.setFont("Helvetica-Bold", 9)
         c.drawString(x + 20*mm, details_y, student.reg_no)
         
         details_y -= line_h
@@ -329,11 +321,11 @@ class DiskPDFGenerator:
         p.drawOn(c, x + 18*mm, details_y - ah + 2*mm)
         
         # Barcode (Code128) - Compact size
-        barcode = code128.Code128(
-            student.reg_no, 
-            barHeight=8*mm,  # Compact height
-            barWidth=0.4*mm,  # Standard bar width
-            humanReadable=False  # No text below barcode
-        )
-        barcode_y = y + 2*mm  # Slightly more padding from bottom
-        barcode.drawOn(c, x + (w - barcode.width)/2, barcode_y)
+        # barcode = code128.Code128(
+        #     student.reg_no, 
+        #     barHeight=8*mm,  # Compact height
+        #     barWidth=0.4*mm,  # Standard bar width
+        #     humanReadable=False  # No text below barcode
+        # )
+        # barcode_y = y + 2*mm  # Slightly more padding from bottom
+        # barcode.drawOn(c, x + (w - barcode.width)/2, barcode_y)

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     @property
     def photos_dir(self) -> Path:
         # return Path(self.media_root) / "photos"
-        return Path("C:/photo/ssceint2025")
+        return Path("C:/photos")
     
     class Config:
         env_file = ".env"

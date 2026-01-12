@@ -7,3 +7,4 @@ class AlbumGenerationToDiskRequest(BaseModel):
     exam_title: str
     batch: Optional[str] = None  # None means "All Batches"
     save_path: str = "C:/albums"
+    photos_dir: Optional[str] = None
