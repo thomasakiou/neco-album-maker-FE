@@ -16,6 +16,7 @@ class Student(Base):
     reg_no = Column(String, unique=True, nullable=False, index=True)
     ser_no = Column(String, nullable=False)
     cand_name = Column(String, nullable=False)
+    nin = Column(String, nullable=True)
     school_id = Column(UUID(as_uuid=True), ForeignKey("schools.id"), nullable=True)
     photo_path = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

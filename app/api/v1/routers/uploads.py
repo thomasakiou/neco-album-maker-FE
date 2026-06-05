@@ -11,6 +11,32 @@ from app.domain.commands.handlers.upload_photos_handler import UploadPhotosHandl
 from app.domain.commands.handlers.scan_photos_handler import ScanPhotosHandler
 from app.schemas.upload_schema import ScanPhotosRequest
 from app.api.v1.deps import get_student_repo, get_school_repo, get_state_repo
+from dbfread import FieldParser
+
+class SafeFieldParser(FieldParser):
+    def parseN(self, field, data):
+        try:
+            return super().parseN(field, data)
+        except Exception:
+            return 0
+
+    def parseF(self, field, data):
+        try:
+            return super().parseF(field, data)
+        except Exception:
+            return 0.0
+
+    def parseI(self, field, data):
+        try:
+            return super().parseI(field, data)
+        except Exception:
+            return 0
+
+    def parseO(self, field, data):
+        try:
+            return super().parseO(field, data)
+        except Exception:
+            return 0.0
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -35,7 +61,7 @@ async def upload_state_dbf(
         
         async with session.begin():
             states = []
-            state_dbf_reader = DBF(temp_path, encoding='latin-1', char_decode_errors='ignore')
+            state_dbf_reader = DBF(temp_path, encoding='latin-1', char_decode_errors='ignore', parserclass=SafeFieldParser)
             
             for record in state_dbf_reader:
                 state_name = record.get('STATE') or record.get('NAME')
@@ -93,7 +119,7 @@ async def upload_school_dbf(
             
             schools = []
             missing_states = set()
-            fin25_dbf_reader = DBF(temp_path, encoding='latin-1', char_decode_errors='ignore')
+            fin25_dbf_reader = DBF(temp_path, encoding='latin-1', char_decode_errors='ignore', parserclass=SafeFieldParser)
             
             for record in fin25_dbf_reader:
                 state_code = record.get('STATE_CODE') or record.get('STATE')
@@ -152,7 +178,7 @@ async def upload_student_dbf(
         from app.domain.models.student import Student
         import uuid
         
-        master_dbf_reader = DBF(temp_path, encoding='latin-1', char_decode_errors='ignore')
+        master_dbf_reader = DBF(temp_path, encoding='latin-1', char_decode_errors='ignore', parserclass=SafeFieldParser)
         
         async with session.begin():
             from app.domain.models.school import School
@@ -175,6 +201,7 @@ async def upload_student_dbf(
                 reg_no = record.get('REG_NO') or record.get('Reg_no')
                 ser_no = record.get('SER_NO') or record.get('Ser_no')
                 cand_name = record.get('CAND_NAME') or record.get('Cand_name')
+                nin = record.get('NIN') or record.get('Nin') or ''
                 
                 if not reg_no or not cand_name:
                     continue
@@ -187,6 +214,7 @@ async def upload_student_dbf(
                     reg_no=reg_no,
                     ser_no=ser_no,
                     cand_name=cand_name,
+                    nin=nin,
                     school_id=school.id if school else None
                 )
                 students.append(student)

@@ -11,6 +11,7 @@ class StudentBase(BaseModel):
     reg_no: str
     ser_no: str
     cand_name: str
+    nin: str | None = None
 
 
 class StudentCreate(StudentBase):
@@ -24,6 +25,7 @@ class StudentUpdate(BaseModel):
     reg_no: str | None = None
     ser_no: str | None = None
     cand_name: str | None = None
+    nin: str | None = None
     school_id: UUID | None = None
 
 

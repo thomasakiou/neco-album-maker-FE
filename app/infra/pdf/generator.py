@@ -76,7 +76,8 @@ class PDFGenerator:
         info = f"""
         <b>{student.cand_name}</b><br/>
         Reg: {student.reg_no}<br/>
-        Ser: {student.ser_no}
+        Ser: {student.ser_no}<br/>
+        NIN: {student.nin or ''}
         """
         content.append(Paragraph(info, self.styles['Normal']))
         

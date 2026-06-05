@@ -313,6 +313,12 @@ class DiskPDFGenerator:
         
         details_y -= line_h
         c.setFont("Helvetica-Bold", 9)
+        c.drawString(x + 2*mm, details_y, "NIN:")
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x + 20*mm, details_y, student.nin or '')
+        
+        details_y -= line_h
+        c.setFont("Helvetica-Bold", 9)
         c.drawString(x + 2*mm, details_y, "Name")
         
         # Wrap name

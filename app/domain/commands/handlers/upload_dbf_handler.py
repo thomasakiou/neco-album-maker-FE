@@ -1,11 +1,36 @@
 import uuid
-from dbfread import DBF
+from dbfread import DBF, FieldParser
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.commands.upload_dbf_command import UploadDbfCommand, UploadDbfResult
 from app.domain.models.student import Student
 from app.domain.models.school import School
 from app.domain.models.state import State
 from app.domain.repositories.interfaces import IStudentRepository, ISchoolRepository, IStateRepository
+
+class SafeFieldParser(FieldParser):
+    def parseN(self, field, data):
+        try:
+            return super().parseN(field, data)
+        except Exception:
+            return 0
+
+    def parseF(self, field, data):
+        try:
+            return super().parseF(field, data)
+        except Exception:
+            return 0.0
+
+    def parseI(self, field, data):
+        try:
+            return super().parseI(field, data)
+        except Exception:
+            return 0
+
+    def parseO(self, field, data):
+        try:
+            return super().parseO(field, data)
+        except Exception:
+            return 0.0
 
 
 class UploadDbfHandler:
@@ -22,7 +47,7 @@ class UploadDbfHandler:
                 # Parse states
                 states = []
                 # Use latin-1 encoding with error handling for DBF files
-                state_dbf = DBF(command.state_path, encoding='latin-1', char_decode_errors='ignore')
+                state_dbf = DBF(command.state_path, encoding='latin-1', char_decode_errors='ignore', parserclass=SafeFieldParser)
                 
                 for record in state_dbf:
                     state_name = record.get('STATE') or record.get('NAME')
@@ -36,7 +61,7 @@ class UploadDbfHandler:
                 schools = []
                 school_map = {}
                 # Use latin-1 encoding with error handling for DBF files
-                fin25_dbf = DBF(command.fin25_path, encoding='latin-1', char_decode_errors='ignore')
+                fin25_dbf = DBF(command.fin25_path, encoding='latin-1', char_decode_errors='ignore', parserclass=SafeFieldParser)
                 
                 for record in fin25_dbf:
                     state_code = record.get('STATE_CODE') or record.get('STATE')
@@ -61,7 +86,7 @@ class UploadDbfHandler:
                 students = []
                 missing_school_matches = []
                 # Use latin-1 encoding with error handling for DBF files
-                master_dbf = DBF(command.master_path, encoding='latin-1', char_decode_errors='ignore')
+                master_dbf = DBF(command.master_path, encoding='latin-1', char_decode_errors='ignore', parserclass=SafeFieldParser)
                 
                 for record in master_dbf:
                     schnum = record['SCHNUM']
@@ -74,6 +99,7 @@ class UploadDbfHandler:
                         reg_no=record['REG_NO'],
                         ser_no=record['SER_NO'],
                         cand_name=record['CAND_NAME'],
+                        nin=record.get('NIN') or record.get('Nin') or '',
                         school_id=school.id if school else None
                     )
                     students.append(student)

@@ -25,6 +25,7 @@ class StudentWithSchoolDetails(BaseModel):
     custodian: Optional[str]
     photo_url: Optional[str]
     batch: Optional[str] = None
+    nin: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -217,7 +218,8 @@ async def get_students_by_state(
             town=school.town if school else None,
             custodian=school.custodian if school else None,
             photo_url=photo_url,
-            batch=student.batch
+            batch=student.batch,
+            nin=student.nin
         ))
     
     return students_data
