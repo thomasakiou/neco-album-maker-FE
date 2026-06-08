@@ -227,39 +227,42 @@ class DiskPDFGenerator:
         c.drawRightString(self.width - 15*mm, 10*mm, f"{page_num} of {total_pages}")
 
     def _draw_student_cell(self, c: canvas.Canvas, student: Student, x: float, y: float, w: float, h: float, photos_dir: str = None, zip_archive: zipfile.ZipFile = None):
-        # Cell border
+        # --- Cell border (thin for a clean look) ---
         c.setStrokeColor(colors.black)
-        c.setLineWidth(2.0)
+        c.setLineWidth(0.75)
         c.rect(x, y, w, h)
-        
-        # Layout: Passport on left, QR on right
-        photo_size = 35*mm
-        photo_x = x + 2*mm
-        photo_y = y + h - photo_size - 2*mm
-        
+
+        # --- Layout constants ---
+        pad = 1.5 * mm           # uniform inner padding
+        photo_size = 38 * mm   # enlarged passport
+        qr_size = 16 * mm      # compact QR in top-right corner
+        label_col = 18 * mm    # fixed label column width
+        line_h = 3.5 * mm      # tighter line spacing
+
+        # --- Passport photo (top-left) ---
+        photo_x = x + pad
+        photo_y = y + h - photo_size - pad
+
         photo_drawn = False
         project_root = Path(__file__).parent.parent.parent.parent
         placeholder_path = project_root / "public" / "image" / "null.jpg"
-        
+
         # Dynamic photo source resolution
         if zip_archive:
             filename = f"{student.reg_no}.jpg"
             try:
-                # Try to avoid calling ZipFile.namelist() as it can be slow for 1M+ files
-                # We instead try to open directly and catch KeyError
                 with zip_archive.open(filename) as zf:
                     img_data = io.BytesIO(zf.read())
                     c.drawImage(ImageReader(img_data), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
                     photo_drawn = True
             except KeyError:
-                pass # Not in zip
+                pass
             except Exception as e:
                 print(f"Error drawing photo from zip for {student.reg_no}: {e}")
-        
+
         if not photo_drawn:
             target_dir = Path(photos_dir) if photos_dir else settings.photos_dir
             photo_path = target_dir / f"{student.reg_no}.jpg"
-            
             if photo_path.exists() and photo_path.is_file():
                 try:
                     c.drawImage(str(photo_path), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
@@ -267,7 +270,6 @@ class DiskPDFGenerator:
                 except Exception as e:
                     print(f"Error drawing photo from {photo_path}: {e}")
 
-        # Fallback to placeholder if dynamic source failed
         if not photo_drawn and placeholder_path.exists():
             try:
                 c.drawImage(str(placeholder_path), photo_x, photo_y, width=photo_size, height=photo_size, preserveAspectRatio=True)
@@ -276,62 +278,59 @@ class DiskPDFGenerator:
                 pass
 
         if not photo_drawn:
-            # Fallback if both photo and placeholder fail
             c.setStrokeColor(colors.lightgrey)
             c.rect(photo_x, photo_y, photo_size, photo_size)
-            c.setFont("Helvetica", 14)
-            c.drawCentredString(photo_x + photo_size/2, photo_y + photo_size/2, "No Photo")
+            c.setFont("Helvetica", 12)
+            c.setFillColor(colors.grey)
+            c.drawCentredString(photo_x + photo_size / 2, photo_y + photo_size / 2, "No Photo")
+            c.setFillColor(colors.black)
 
-        # QR Code on the right of the photo
-        qr_size = 22*mm  # Compact size
-        qr_x = x + photo_size + 3*mm
-        qr_y = photo_y + (photo_size - qr_size)/2
-        
+        # --- QR Code (top-right corner) ---
+        qr_x = x + w - qr_size - 2 * mm
+        qr_y = y + h - qr_size - 2 * mm
+
         qr_code = qr.QrCodeWidget("https://neco.gov.ng/")
-        qr_code.barLevel = 'M'  # Medium error correction for better scanning
+        qr_code.barLevel = 'M'
         bounds = qr_code.getBounds()
         qr_w = bounds[2] - bounds[0]
         qr_h = bounds[3] - bounds[1]
-        d = Drawing(qr_size, qr_size, transform=[qr_size/qr_w, 0, 0, qr_size/qr_h, 0, 0])
+        d = Drawing(qr_size, qr_size, transform=[qr_size / qr_w, 0, 0, qr_size / qr_h, 0, 0])
         d.add(qr_code)
         renderPDF.draw(d, c, qr_x, qr_y)
-        
-        # Details below matching 112.png
-        details_y = photo_y - 4*mm  # Adjusted spacing
-        line_h = 4*mm  # Bigger line height for larger text
-        
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 2*mm, details_y, "Serial No.")
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 20*mm, details_y, student.ser_no)
-        
+
+        # --- Detail rows (below passport) ---
+        details_y = photo_y - 5 * mm   # comfortable gap below photo
+        value_x = x + pad + label_col   # values start after label column
+
+        # Row 1: Serial No.
+        c.setFont("Helvetica", 7)
+        c.drawString(x + pad, details_y, "Serial No:")
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(value_x, details_y, student.ser_no)
+
+        # Row 2: Exam No.
         details_y -= line_h
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 2*mm, details_y, "Exam No.")
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 20*mm, details_y, student.reg_no)
-        
+        c.setFont("Helvetica", 7)
+        c.drawString(x + pad, details_y, "Exam No:")
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(value_x, details_y, student.reg_no)
+
+        # Row 3: NIN
         details_y -= line_h
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 2*mm, details_y, "NIN:")
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 20*mm, details_y, student.nin or '')
-        
+        c.setFont("Helvetica", 7)
+        c.drawString(x + pad, details_y, "NIN:")
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(value_x, details_y, student.nin or '')
+
+        # Row 4: Name (wrappable)
         details_y -= line_h
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 2*mm, details_y, "Name")
-        
-        # Wrap name
-        p = Paragraph(student.cand_name.upper(), self.cell_value_style)
-        aw, ah = p.wrap(w - 20*mm, 15*mm)
-        p.drawOn(c, x + 18*mm, details_y - ah + 2*mm)
-        
-        # Barcode (Code128) - Compact size
-        # barcode = code128.Code128(
-        #     student.reg_no, 
-        #     barHeight=8*mm,  # Compact height
-        #     barWidth=0.4*mm,  # Standard bar width
-        #     humanReadable=False  # No text below barcode
-        # )
-        # barcode_y = y + 2*mm  # Slightly more padding from bottom
-        # barcode.drawOn(c, x + (w - barcode.width)/2, barcode_y)
+        c.setFont("Helvetica", 7)
+        c.drawString(x + pad, details_y, "Name:")
+
+        name_style = ParagraphStyle(
+            'CellName', parent=self.styles['Normal'],
+            fontSize=8, leading=9, fontName='Helvetica-Bold'
+        )
+        p = Paragraph(student.cand_name.upper(), name_style)
+        aw, ah = p.wrap(w - label_col - pad - 2 * mm, 12 * mm)
+        p.drawOn(c, value_x, details_y - ah + 2.5 * mm)
